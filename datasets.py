@@ -144,7 +144,7 @@ class CustomDataset(Dataset):
                 orig_data=False
             )
             
-            boxes.append([xmin_final, ymin_final, xmax_final, ymax_final])
+            boxes.append([max(xmin_final,0), max(0,ymin_final), max(0,xmax_final), max(0,ymax_final)])
         # except:
         #     pass
         # Bounding box to tensor.
