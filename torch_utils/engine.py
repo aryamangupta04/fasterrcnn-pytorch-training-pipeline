@@ -43,50 +43,53 @@ def train_one_epoch(
 
     step_counter = 0
     for images, targets in metric_logger.log_every(data_loader, print_freq, header):
-        step_counter += 1
-        images = list(image.to(device) for image in images)
-        targets = [{k: v.to(device).to(torch.int64) for k, v in t.items()} for t in targets]
+        try:
+            step_counter += 1
+            images = list(image.to(device) for image in images)
+            targets = [{k: v.to(device).to(torch.int64) for k, v in t.items()} for t in targets]
 
 
-        with torch.cuda.amp.autocast(enabled=scaler is not None):
-            loss_dict = model(images, targets)
-            losses = sum(loss for loss in loss_dict.values())
+            with torch.cuda.amp.autocast(enabled=scaler is not None):
+                loss_dict = model(images, targets)
+                losses = sum(loss for loss in loss_dict.values())
 
-        # reduce losses over all GPUs for logging purposes
-        loss_dict_reduced = utils.reduce_dict(loss_dict)
-        losses_reduced = sum(loss for loss in loss_dict_reduced.values())
+            # reduce losses over all GPUs for logging purposes
+            loss_dict_reduced = utils.reduce_dict(loss_dict)
+            losses_reduced = sum(loss for loss in loss_dict_reduced.values())
 
-        loss_value = losses_reduced.item()
+            loss_value = losses_reduced.item()
 
-        if not math.isfinite(loss_value):
-            print(f"Loss is {loss_value}, stopping training")
-            print(loss_dict_reduced)
-            sys.exit(1)
+            if not math.isfinite(loss_value):
+                print(f"Loss is {loss_value}, stopping training")
+                print(loss_dict_reduced)
+                sys.exit(1)
 
-        optimizer.zero_grad()
-        if scaler is not None:
-            scaler.scale(losses).backward()
-            scaler.step(optimizer)
-            scaler.update()
-        else:
-            losses.backward()
-            optimizer.step()
+            optimizer.zero_grad()
+            if scaler is not None:
+                scaler.scale(losses).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                losses.backward()
+                optimizer.step()
 
-        if lr_scheduler is not None:
-            lr_scheduler.step()
+            if lr_scheduler is not None:
+                lr_scheduler.step()
 
-        metric_logger.update(loss=losses_reduced, **loss_dict_reduced)
-        metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+            metric_logger.update(loss=losses_reduced, **loss_dict_reduced)
+            metric_logger.update(lr=optimizer.param_groups[0]["lr"])
 
-        batch_loss_list.append(loss_value)
-        batch_loss_cls_list.append(loss_dict_reduced['loss_classifier'].detach().cpu())
-        batch_loss_box_reg_list.append(loss_dict_reduced['loss_box_reg'].detach().cpu())
-        batch_loss_objectness_list.append(loss_dict_reduced['loss_objectness'].detach().cpu())
-        batch_loss_rpn_list.append(loss_dict_reduced['loss_rpn_box_reg'].detach().cpu())
-        train_loss_hist.send(loss_value)
+            batch_loss_list.append(loss_value)
+            batch_loss_cls_list.append(loss_dict_reduced['loss_classifier'].detach().cpu())
+            batch_loss_box_reg_list.append(loss_dict_reduced['loss_box_reg'].detach().cpu())
+            batch_loss_objectness_list.append(loss_dict_reduced['loss_objectness'].detach().cpu())
+            batch_loss_rpn_list.append(loss_dict_reduced['loss_rpn_box_reg'].detach().cpu())
+            train_loss_hist.send(loss_value)
 
-        if scheduler is not None:
-            scheduler.step(epoch + (step_counter/len(data_loader)))
+            if scheduler is not None:
+                scheduler.step(epoch + (step_counter/len(data_loader)))
+        except:
+            continue
 
     return (
         metric_logger, 

@@ -1,19 +1,3 @@
-"""
-USAGE
-
-# training with Faster RCNN ResNet50 FPN model without mosaic or any other augmentation:
-python train.py --model fasterrcnn_resnet50_fpn --epochs 2 --data data_configs/voc.yaml --mosaic 0 --batch 4
-
-# Training on ResNet50 FPN with custom project folder name with mosaic augmentation (ON by default):
-python train.py --model fasterrcnn_resnet50_fpn --epochs 2 --data data_configs/voc.yaml --name resnet50fpn_voc --batch 4
-
-# Training on ResNet50 FPN with custom project folder name with mosaic augmentation (ON by default) and added training augmentations:
-python train.py --model fasterrcnn_resnet50_fpn --epochs 2 --use-train-aug --data data_configs/voc.yaml --name resnet50fpn_voc --batch 4
-
-# Distributed training:
-export CUDA_VISIBLE_DEVICES=0,1
-python -m torch.distributed.launch --nproc_per_node=2 --use_env train.py --data data_configs/smoke.yaml --epochs 100 --model fasterrcnn_resnet50_fpn --name smoke_training --batch 16
-"""
 from torch_utils.engine import (
     train_one_epoch, evaluate, utils
 )
@@ -127,9 +111,7 @@ def parse_opt():
         '-uta', '--use-train-aug', 
         dest='use_train_aug', 
         action='store_true',
-        help='whether to use train augmentation, blur, gray, \
-              brightness contrast, color jitter, random gamma \
-              all at once'
+        help='whether to use train augmentation, blur, gray, brightness contrast, color jitter, random gamma all at once'
     )
     parser.add_argument(
         '-ca', '--cosine-annealing', 
@@ -147,18 +129,13 @@ def parse_opt():
         '-r', '--resume-training', 
         dest='resume_training', 
         action='store_true',
-        help='whether to resume training, if true, \
-            loads previous training plots and epochs \
-            and also loads the otpimizer state dictionary'
+        help='whether to resume training, if true, loads previous training plots and epochs and also loads the otpimizer state dictionary'
     )
     parser.add_argument(
         '-st', '--square-training',
         dest='square_training',
         action='store_true',
-        help='Resize images to square shape instead of aspect ratio resizing \
-              for single image training. For mosaic training, this resizes \
-              single images to square shape first then puts them on a \
-              square canvas.'
+        help='Resize images to square shape instead of aspect ratio resizing for single image training. For mosaic training, this resizes single images to square shape first then puts them on a square canvas.'
     )
     parser.add_argument(
         '--world-size', 
@@ -199,8 +176,7 @@ def parse_opt():
         '--project-dir',
         dest='project_dir',
         default=None,
-        help='save resutls to custom dir instead of `outputs` directory, \
-              --project-dir will be named if not already present',
+        help='save resutls to custom dir instead of `outputs` directory, --project-dir will be named if not already present',
         type=str
     )
 
@@ -241,6 +217,7 @@ def main(args):
     set_log(OUT_DIR)
     writer = set_summary_writer(OUT_DIR)
 
+   
     yaml_save(file_path=os.path.join(OUT_DIR, 'opt.yaml'), data=args)
 
     # Model configurations
@@ -404,21 +381,25 @@ def main(args):
     for epoch in range(start_epochs, NUM_EPOCHS):
         train_loss_hist.reset()
 
-        _, batch_loss_list, \
-            batch_loss_cls_list, \
-            batch_loss_box_reg_list, \
-            batch_loss_objectness_list, \
-            batch_loss_rpn_list = train_one_epoch(
-            model, 
-            optimizer, 
-            train_loader, 
-            DEVICE, 
-            epoch, 
-            train_loss_hist,
-            print_freq=100,
-            scheduler=scheduler,
-            scaler=SCALER
-        )
+        try:
+            _, batch_loss_list, \
+                batch_loss_cls_list, \
+                batch_loss_box_reg_list, \
+                batch_loss_objectness_list, \
+                batch_loss_rpn_list = train_one_epoch(
+                model, 
+                optimizer, 
+                train_loader, 
+                DEVICE, 
+                epoch, 
+                train_loss_hist,
+                print_freq=100,
+                scheduler=scheduler,
+                scaler=SCALER
+            )
+        except ValueError as ve:
+            print("Caught ValueError in DataLoader worker process:", ve)
+            continue
 
         stats, val_pred_image = evaluate(
             model, 
@@ -426,147 +407,175 @@ def main(args):
             device=DEVICE,
             save_valid_preds=SAVE_VALID_PREDICTIONS,
             out_dir=OUT_DIR,
-            classes=CLASSES,
-            colors=COLORS
+            classes=CL
+            ASSES,
+            colors=COLORS,
+            epoch=epoch,
+            img_size=IMAGE_SIZE,
+            weights_file=os.path.join(OUT_DIR, f'model_epoch_{epoch}.pt')
         )
+        
+        train_loss_epoch = train_loss_hist.value
+        train_loss_list_epoch.append(train_loss_epoch)
 
-        # Append the current epoch's batch-wise losses to the `train_loss_list`.
-        train_loss_list.extend(batch_loss_list)
-        loss_cls_list.append(np.mean(np.array(batch_loss_cls_list,)))
-        loss_box_reg_list.append(np.mean(np.array(batch_loss_box_reg_list)))
-        loss_objectness_list.append(np.mean(np.array(batch_loss_objectness_list)))
-        loss_rpn_list.append(np.mean(np.array(batch_loss_rpn_list)))
+        # Validation AP
+        if stats is not None:
+            stats_05 = stats[0]
+            stats = stats[1]
+            if stats_05:
+                val_map_05.append(stats_05.map)
+                val_map.append(stats.map)
+                if not args['disable_wandb']:
+                    wandb.log(
+                        {
+                            'Val mAP IoU 0.5': stats_05.map, 
+                            'Val mAP IoU 0.5:0.95': stats.map
+                        }, 
+                        step=epoch
+                    )
+            else:
+                print("Validation mAP at IoU threshold 0.5: None")
+                print("Validation mAP at IoU threshold 0.5:0.95: None")
 
-        # Append curent epoch's average loss to `train_loss_list_epoch`.
-        train_loss_list_epoch.append(train_loss_hist.value)
-        val_map_05.append(stats[1])
-        val_map.append(stats[0])
-
-        # Save loss plot for batch-wise list.
-        save_loss_plot(OUT_DIR, train_loss_list)
-        # Save loss plot for epoch-wise list.
-        save_loss_plot(
-            OUT_DIR, 
-            train_loss_list_epoch,
-            'epochs',
-            'train loss',
-            save_name='train_loss_epoch' 
-        )
-        # Save all the training loss plots.
-        save_loss_plot(
-            OUT_DIR, 
-            loss_cls_list, 
-            'epochs', 
-            'loss cls',
-            save_name='train_loss_cls'
-        )
-        save_loss_plot(
-            OUT_DIR, 
-            loss_box_reg_list, 
-            'epochs', 
-            'loss bbox reg',
-            save_name='train_loss_bbox_reg'
-        )
-        save_loss_plot(
-            OUT_DIR,
-            loss_objectness_list,
-            'epochs',
-            'loss obj',
-            save_name='train_loss_obj'
-        )
-        save_loss_plot(
-            OUT_DIR,
-            loss_rpn_list,
-            'epochs',
-            'loss rpn bbox',
-            save_name='train_loss_rpn_bbox'
-        )
-
-        # Save mAP plots.
-        save_mAP(OUT_DIR, val_map_05, val_map)
-
-        # Save batch-wise train loss plot using TensorBoard. Better not to use it
-        # as it increases the TensorBoard log sizes by a good extent (in 100s of MBs).
-        # tensorboard_loss_log('Train loss', np.array(train_loss_list), writer)
-
-        # Save epoch-wise train loss plot using TensorBoard.
+        # Log to tensorboard.
         tensorboard_loss_log(
-            'Train loss', 
-            np.array(train_loss_list_epoch), 
-            writer,
-            epoch
-        )
-
-        # Save mAP plot using TensorBoard.
-        tensorboard_map_log(
-            name='mAP', 
-            val_map_05=np.array(val_map_05), 
-            val_map=np.array(val_map),
-            writer=writer,
+            writer=writer, 
+            loss_value=train_loss_epoch, 
+            loss_key='Total Loss/train', 
             epoch=epoch
         )
-
-        coco_log(OUT_DIR, stats)
-        csv_log(
-            OUT_DIR, 
-            stats, 
-            epoch,
-            train_loss_list,
-            loss_cls_list,
-            loss_box_reg_list,
-            loss_objectness_list,
-            loss_rpn_list
+        tensorboard_loss_log(
+            writer=writer, 
+            loss_value=batch_loss_cls_list.avg, 
+            loss_key='Classification Loss/train', 
+            epoch=epoch
         )
+        tensorboard_loss_log(
+            writer=writer, 
+            loss_value=batch_loss_box_reg_list.avg, 
+            loss_key='Box Regression Loss/train', 
+            epoch=epoch
+        )
+        tensorboard_loss_log(
+            writer=writer, 
+            loss_value=batch_loss_objectness_list.avg, 
+            loss_key='Objectness Loss/train', 
+            epoch=epoch
+        )
+        tensorboard_loss_log(
+            writer=writer, 
+            loss_value=batch_loss_rpn_list.avg, 
+            loss_key='RPN Loss/train', 
+            epoch=epoch
+        )
+        
+        if val_map:
+            tensorboard_map_log(
+                writer=writer, 
+                map_value=val_map[-1], 
+                map_key='mAP@0.5:0.95/val', 
+                epoch=epoch
+            )
+            tensorboard_map_log(
+                writer=writer, 
+                map_value=val_map_05[-1], 
+                map_key='mAP@0.5/val', 
+                epoch=epoch
+            )
+        
+        csv_log(
+            file_path=os.path.join(OUT_DIR, 'train_loss.csv'), 
+            data=train_loss_list
+        )
+        csv_log(
+            file_path=os.path.join(OUT_DIR, 'train_loss_epoch.csv'), 
+            data=train_loss_list_epoch
+        )
+        csv_log(
+            file_path=os.path.join(OUT_DIR, 'val_map.csv'), 
+            data=val_map
+        )
+        csv_log(
+            file_path=os.path.join(OUT_DIR, 'val_map_05.csv'), 
+            data=val_map_05
+        )
+        
+        print('\n', end='')
 
-        # WandB logging.
-        if not args['disable_wandb']:
-            wandb_log(
-                train_loss_hist.value,
-                batch_loss_list,
-                loss_cls_list,
-                loss_box_reg_list,
-                loss_objectness_list,
-                loss_rpn_list,
-                stats[1],
-                stats[0],
-                val_pred_image,
-                IMAGE_SIZE
+        # Save model checkpoint
+        if (epoch + 1) % 5 == 0:
+            save_model(
+                model, 
+                optimizer, 
+                epoch, 
+                out_dir=OUT_DIR,
+                scheduler=scheduler
+            )
+            save_model_state(
+                model, 
+                optimizer, 
+                epoch, 
+                out_dir=OUT_DIR,
+                scheduler=scheduler
+            )
+        
+        # Save the best model based on validation mAP@0.5
+        if val_map_05 and (epoch + 1) % 5 == 0:
+            save_best_model(
+                epoch=epoch, 
+                val_map=val_map_05[-1], 
+                model=model, 
+                optimizer=optimizer, 
+                out_dir=OUT_DIR
             )
 
-        # Save the current epoch model state. This can be used 
-        # to resume training. It saves model state dict, number of
-        # epochs trained for, optimizer state dict, and loss function.
-        save_model(
-            epoch, 
-            model, 
-            optimizer, 
-            train_loss_list, 
-            train_loss_list_epoch,
-            val_map,
-            val_map_05,
-            OUT_DIR,
-            data_configs,
-            args['model']
-        )
-        # Save the model dictionary only for the current epoch.
-        save_model_state(model, OUT_DIR, data_configs, args['model'])
-        # Save best model if the current mAP @0.5:0.95 IoU is
-        # greater than the last hightest.
-        save_best_model(
-            model, 
-            val_map[-1], 
-            epoch, 
-            OUT_DIR,
-            data_configs,
-            args['model']
-        )
-    
-    # Save models to Weights&Biases.
     if not args['disable_wandb']:
-        wandb_save_model(OUT_DIR)
+        save_loss_plot(
+            out_dir=OUT_DIR, 
+            train_loss=train_loss_list_epoch, 
+            val_map=val_map, 
+            val_map_05=val_map_05
+        )
 
+    # Final save
+    save_model(
+        model, 
+        optimizer, 
+        epoch, 
+        out_dir=OUT_DIR,
+        scheduler=scheduler
+    )
+    save_model_state(
+        model, 
+        optimizer, 
+        epoch, 
+        out_dir=OUT_DIR,
+        scheduler=scheduler
+    )
+    # Log to wandb.
+    wandb_save_model(
+        model, 
+        optimizer, 
+        epoch, 
+        scheduler, 
+        out_dir=OUT_DIR
+    )
+
+    if not args['disable_wandb']:
+        save_mAP(
+            out_dir=OUT_DIR, 
+            val_map=val_map, 
+            val_map_05=val_map_05
+        )
+    # Close the summary writer.
+    writer.close()
+    # Log the training result to console.
+    coco_log(
+        path=os.path.join(OUT_DIR, 'coco_results.txt'), 
+        model_path=os.path.join(OUT_DIR, 'models', 'best_model.pth')
+    )
+    print('DONE.')
 
 if __name__ == '__main__':
-    args = parse_opt()
-    main(args)
-
+    opt = parse_opt()
+    main(opt)
