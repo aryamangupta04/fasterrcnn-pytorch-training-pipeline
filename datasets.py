@@ -321,6 +321,7 @@ class CustomDataset(Dataset):
         # see https://discuss.pytorch.org/t/fasterrcnn-images-with-no-objects-present-cause-an-error/117974/4
         if np.isnan((target['boxes']).numpy()).any() or target['boxes'].shape == torch.Size([0]):
             target['boxes'] = torch.zeros((0, 4), dtype=torch.int64)
+        target['boxes'] = torch.clamp(target['boxes'], min=0)
         return image_resized, target
 
     def __len__(self):
