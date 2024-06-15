@@ -101,50 +101,53 @@ class CustomDataset(Dataset):
         # try:
         tree = et.parse(annot_file_path)
         root = tree.getroot()
-        for member in root.findall('object'):
-            # Map the current object name to `classes` list to get
-            # the label index and append to `labels` list.
-            labels.append(self.classes.index(member.find('name').text))
-            
-            # xmin = left corner x-coordinates
-            xmin = float(member.find('bndbox').find('xmin').text)
-            # xmax = right corner x-coordinates
-            xmax = float(member.find('bndbox').find('xmax').text)
-            # ymin = left corner y-coordinates
-            ymin = float(member.find('bndbox').find('ymin').text)
-            # ymax = right corner y-coordinates
-            ymax = float(member.find('bndbox').find('ymax').text)
+        try:
+            for member in root.findall('object'):
+                # Map the current object name to `classes` list to get
+                # the label index and append to `labels` list.
+                labels.append(self.classes.index(member.find('name').text))
+                
+                # xmin = left corner x-coordinates
+                xmin = float(member.find('bndbox').find('xmin').text)
+                # xmax = right corner x-coordinates
+                xmax = float(member.find('bndbox').find('xmax').text)
+                # ymin = left corner y-coordinates
+                ymin = float(member.find('bndbox').find('ymin').text)
+                # ymax = right corner y-coordinates
+                ymax = float(member.find('bndbox').find('ymax').text)
 
-            xmin, ymin, xmax, ymax = self.check_image_and_annotation(
-                xmin, 
-                ymin, 
-                xmax, 
-                ymax, 
-                image_width, 
-                image_height, 
-                orig_data=True
-            )
+                xmin, ymin, xmax, ymax = self.check_image_and_annotation(
+                    xmin, 
+                    ymin, 
+                    xmax, 
+                    ymax, 
+                    image_width, 
+                    image_height, 
+                    orig_data=True
+                )
 
-            orig_boxes.append([xmin, ymin, xmax, ymax])
-            
-            # Resize the bounding boxes according to the
-            # desired `width`, `height`.
-            xmin_final = (xmin/image_width)*image_resized.shape[1]
-            xmax_final = (xmax/image_width)*image_resized.shape[1]
-            ymin_final = (ymin/image_height)*image_resized.shape[0]
-            ymax_final = (ymax/image_height)*image_resized.shape[0]
+                orig_boxes.append([xmin, ymin, xmax, ymax])
+                
+                # Resize the bounding boxes according to the
+                # desired `width`, `height`.
+                xmin_final = (xmin/image_width)*image_resized.shape[1]
+                xmax_final = (xmax/image_width)*image_resized.shape[1]
+                ymin_final = (ymin/image_height)*image_resized.shape[0]
+                ymax_final = (ymax/image_height)*image_resized.shape[0]
 
-            xmin_final, ymin_final, xmax_final, ymax_final = self.check_image_and_annotation(
-                xmin_final, 
-                ymin_final, 
-                xmax_final, 
-                ymax_final, 
-                image_resized.shape[1], 
-                image_resized.shape[0],
-                orig_data=False
-            )
-            
-            boxes.append([max(xmin_final,0), max(0,ymin_final), max(0,xmax_final), max(0,ymax_final)])
+                xmin_final, ymin_final, xmax_final, ymax_final = self.check_image_and_annotation(
+                    xmin_final, 
+                    ymin_final, 
+                    xmax_final, 
+                    ymax_final, 
+                    image_resized.shape[1], 
+                    image_resized.shape[0],
+                    orig_data=False
+                )
+                
+                boxes.append([max(xmin_final,0), max(0,ymin_final), max(0,xmax_final), max(0,ymax_final)])
+        except:
+            pass
         # except:
         #     pass
         # Bounding box to tensor.
